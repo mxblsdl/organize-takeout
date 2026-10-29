@@ -1,7 +1,63 @@
-A set of cli scripts to help organize the photos from google takeout mass downloads
+# organize-takeout
 
-All scripts can be run with `uv run <script_name>`
+A dependency-free Go CLI for organizing Google Photos Takeout media by date.
+It reads Takeout JSON sidecars first, then EXIF dates, then dates in filenames.
+The `zip` command streams media directly from archive files without extracting
+them, and `existing` organizes files that have already been extracted.
 
-1. `organize-takeout.py`: This script will organize the photos from a Google Takeout download into folders based on the date the photo was taken. It will create a folder for each year and month, and move the photos into the appropriate folder. The key feature of this script is it unzips the downloaded takeout files and organizes the photos automatically. ex. `uv run organize-takeout.py /path/to/takeout /path/to/output/folder`
+## Install
 
-2. `organize-existing.py`: This script will organize photos that are already in a folder structure. It will move the photos into folders based on the date the photo was taken, creating a folder for each year and month. ex. `uv run organize-existing.py /path/to/existing/photos /path/to/output/folder`
+Install the latest version with Go:
+
+```sh
+go install github.com/mxblsdl/organize-takeout@latest
+```
+
+Make sure Go's binary directory is on your `PATH`. To build from a checkout:
+
+```sh
+go build -o organize-takeout .
+```
+
+The program uses only the Go standard library.
+
+## Usage
+
+Organize all `.zip` files directly from a Takeout folder:
+
+```sh
+organize-takeout zip ~/Downloads/takeout ~/Photos-Backup
+organize-takeout zip --dry-run ~/Downloads/takeout ~/Photos-Backup
+```
+
+Organize media in an already-extracted folder (moves files by default):
+
+```sh
+organize-takeout existing ~/loose-photos /mnt/usbdrive/Photos-Backup
+organize-takeout existing --copy ~/loose-photos /mnt/usbdrive/Photos-Backup
+```
+
+Both commands support:
+
+- `--structure year|year-month|year-month-day` (default: `year-month`)
+- `--utc` to bucket JSON dates using UTC instead of local time
+- `--dry-run` to report actions without changing files
+
+The `existing` command also supports `--remove-duplicates`, which removes a
+source file when identical content is already present in the destination
+(ignored with `--copy`). Existing duplicates are checked across the destination
+tree; ZIP duplicates are checked in their target folder. Differing files with
+the same name are preserved with a numeric suffix.
+
+Files in ZIP archives with no usable date are placed in `Unknown_Date`. For
+already-extracted files, the file's modified time is the final date fallback.
+JSON and HTML files are not copied or moved. Dates are applied to the modified
+time of files written from ZIP archives.
+
+## Development
+
+Run the tests with:
+
+```sh
+go test ./...
+```
