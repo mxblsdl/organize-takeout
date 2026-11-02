@@ -1,4 +1,4 @@
-# organize-takeout
+# organize-photos
 
 A dependency-free Go CLI for organizing Google Photos Takeout media by date.
 It reads Takeout JSON sidecars first, then EXIF dates, then dates in filenames.
@@ -7,34 +7,35 @@ them, and `existing` organizes files that have already been extracted.
 
 ## Install
 
-Install the latest version with Go:
+Build the executable from a checkout:
 
 ```sh
-go install github.com/mxblsdl/organize-takeout@latest
+go build -o organize-photos .
 ```
 
-Make sure Go's binary directory is on your `PATH`. To build from a checkout:
+On Windows, use an `.exe` suffix:
 
 ```sh
-go build -o organize-takeout .
+go build -o organize-photos.exe .
 ```
 
-The program uses only the Go standard library.
+Place the resulting binary in a directory on your `PATH` to run it from
+anywhere. The program uses only the Go standard library.
 
 ## Usage
 
 Organize all `.zip` files directly from a Takeout folder:
 
 ```sh
-organize-takeout zip ~/Downloads/takeout ~/Photos-Backup
-organize-takeout zip --dry-run ~/Downloads/takeout ~/Photos-Backup
+organize-photos zip ~/Downloads/takeout ~/Photos-Backup
+organize-photos zip --dry-run ~/Downloads/takeout ~/Photos-Backup
 ```
 
 Organize media in an already-extracted folder (moves files by default):
 
 ```sh
-organize-takeout existing ~/loose-photos /mnt/usbdrive/Photos-Backup
-organize-takeout existing --copy ~/loose-photos /mnt/usbdrive/Photos-Backup
+organize-photos existing ~/loose-photos /mnt/usbdrive/Photos-Backup
+organize-photos existing --copy ~/loose-photos /mnt/usbdrive/Photos-Backup
 ```
 
 Both commands support:

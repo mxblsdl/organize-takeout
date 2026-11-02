@@ -243,7 +243,7 @@ func TestRunHelp(t *testing.T) {
 	if code := run([]string{"help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run(help) exit code = %d", code)
 	}
-	if !strings.Contains(stdout.String(), "organize-takeout <command>") {
+	if !strings.Contains(stdout.String(), "organize-photos <command>") {
 		t.Fatalf("unexpected help: %s", stdout.String())
 	}
 }

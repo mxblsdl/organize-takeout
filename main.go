@@ -33,13 +33,13 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `Organize Google Photos Takeout files by date.
 
 Usage:
-  organize-takeout <command> [options] SOURCE DEST
+  organize-photos <command> [options] SOURCE DEST
 
 Commands:
   zip       Organize media directly from Takeout .zip files
   existing  Organize media in an already-extracted folder
 
-Run "organize-takeout <command> -h" for command options.`)
+Run "organize-photos <command> -h" for command options.`)
 }
 
 func commonFlags(fs *flag.FlagSet, opts *options) {
@@ -60,7 +60,7 @@ func runZipCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "Usage: organize-takeout zip [options] SOURCE DEST")
+		fmt.Fprintln(stderr, "Usage: organize-photos zip [options] SOURCE DEST")
 		fs.PrintDefaults()
 		return 2
 	}
@@ -89,7 +89,7 @@ func runExistingCommand(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "Usage: organize-takeout existing [options] SOURCE DEST")
+		fmt.Fprintln(stderr, "Usage: organize-photos existing [options] SOURCE DEST")
 		fs.PrintDefaults()
 		return 2
 	}
