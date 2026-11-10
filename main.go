@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 )
 
 func main() {
@@ -22,6 +25,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runZipCommand(args[1:], stdout, stderr)
 	case "existing":
 		return runExistingCommand(args[1:], stdout, stderr)
+	case "import":
+		return runImportCommand(args[1:], stdout, stderr)
+	case "mounts":
+		return runMountsCommand(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "Unknown command %q\n\n", args[0])
 		printUsage(stderr)
@@ -38,6 +45,8 @@ Usage:
 Commands:
   zip       Organize media directly from Takeout .zip files
   existing  Organize media in an already-extracted folder
+  import    Copy media from an SD card or folder into the organized library
+  mounts    List paths to mounted GVFS network shares
 
 Run "organize-photos <command> -h" for command options.`)
 }
@@ -102,4 +111,82 @@ func runExistingCommand(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func runImportCommand(args []string, stdout, stderr io.Writer) int {
+	opts := options{copyFiles: true}
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	commonFlags(fs, &opts)
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 2 {
+		fmt.Fprintln(stderr, "Usage: organize-photos import [options] SOURCE DEST")
+		fs.PrintDefaults()
+		return 2
+	}
+	if !validStructure(opts.structure) {
+		fmt.Fprintf(stderr, "Invalid structure %q (choose year, year-month, or year-month-day)\n", opts.structure)
+		return 2
+	}
+	if err := organizeExisting(fs.Arg(0), fs.Arg(1), opts, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runMountsCommand(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("mounts", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "Usage: organize-photos mounts")
+		return 2
+	}
+
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		runtimeDir = filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+	}
+	mounts, err := findGVFSMounts(runtimeDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	if len(mounts) == 0 {
+		fmt.Fprintf(stdout, "No GVFS mounts found in %s\n", filepath.Join(runtimeDir, "gvfs"))
+		return 0
+	}
+	for _, mount := range mounts {
+		fmt.Fprintln(stdout, mount)
+	}
+	return 0
+}
+
+func findGVFSMounts(runtimeDir string) ([]string, error) {
+	root := filepath.Join(runtimeDir, "gvfs")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read GVFS mount directory %q: %w", root, err)
+	}
+
+	var mounts []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		mounts = append(mounts, filepath.Join(root, entry.Name()))
+	}
+	sort.Strings(mounts)
+	return mounts, nil
 }

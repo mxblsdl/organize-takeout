@@ -247,3 +247,69 @@ func TestRunHelp(t *testing.T) {
 		t.Fatalf("unexpected help: %s", stdout.String())
 	}
 }
+
+func TestRunImportCopiesFilesIntoYearMonthFolders(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "sd-card")
+	dest := filepath.Join(root, "photos")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(source, "IMG_20200615.jpg")
+	if err := os.WriteFile(sourceFile, []byte("photo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"import", source, dest}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run(import) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	if _, err := os.Stat(sourceFile); err != nil {
+		t.Fatalf("import should leave the source file untouched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "2020", "06", "IMG_20200615.jpg")); err != nil {
+		t.Fatalf("imported file not found in year/month folder: %v", err)
+	}
+}
+
+func TestFindGVFSMounts(t *testing.T) {
+	runtimeDir := t.TempDir()
+	gvfsDir := filepath.Join(runtimeDir, "gvfs")
+	for _, name := range []string{"smb-share:server=nas,share=photos", "smb-share:server=nas,share=backup"} {
+		if err := os.MkdirAll(filepath.Join(gvfsDir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(gvfsDir, "not-a-mount"), []byte("ignored"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mounts, err := findGVFSMounts(runtimeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(gvfsDir, "smb-share:server=nas,share=backup"),
+		filepath.Join(gvfsDir, "smb-share:server=nas,share=photos"),
+	}
+	if strings.Join(mounts, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("findGVFSMounts() = %v, want %v", mounts, want)
+	}
+}
+
+func TestRunMountsPrintsGVFSPaths(t *testing.T) {
+	runtimeDir := t.TempDir()
+	mountPath := filepath.Join(runtimeDir, "gvfs", "smb-share:server=nas,share=photos")
+	if err := os.MkdirAll(mountPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"mounts"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run(mounts) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != mountPath {
+		t.Fatalf("run(mounts) output = %q, want %q", stdout.String(), mountPath)
+	}
+}
