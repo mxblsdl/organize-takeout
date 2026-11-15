@@ -67,6 +67,12 @@ The `existing` and `import` commands support:
 - `--utc` to bucket JSON dates using UTC instead of local time
 - `--dry-run` to report actions without changing files
 
+Before writing or moving files, `zip`, `existing`, and `import` ask for
+confirmation if any required date folders are missing. The prompt shows the
+folders that would be created; answer `y` or `yes` to continue. Any other
+response, including end-of-input, cancels the operation. `--dry-run` does not
+prompt because it does not create folders.
+
 The `existing` command also supports `--remove-duplicates`, which removes a
 source file when identical content is already present in the destination
 (ignored with `--copy`). `import` always copies and leaves source files intact.

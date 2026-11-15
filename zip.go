@@ -18,6 +18,15 @@ type fileSignature struct {
 	crc  uint32
 }
 
+type zipEntryPlan struct {
+	memberIndex int
+	date        time.Time
+	hasDate     bool
+	sourceName  string
+	dateErr     error
+	folder      string
+}
+
 func organizeZips(source, dest string, opts options, stdout, stderr io.Writer) error {
 	entries, err := os.ReadDir(source)
 	if err != nil {
@@ -62,6 +71,50 @@ func organizeZips(source, dest string, opts options, stdout, stderr io.Writer) e
 	}
 	fmt.Fprintf(stdout, "Indexed %d metadata entries.\n\n", len(index.title))
 
+	plans := make(map[string][]zipEntryPlan, len(zips))
+	var targetFolders []string
+	for _, filename := range zips {
+		reader, err := zip.OpenReader(filename)
+		if err != nil {
+			continue
+		}
+		for memberIndex, member := range reader.File {
+			if member.FileInfo().IsDir() || shouldSkip(path.Base(member.Name)) {
+				continue
+			}
+			date, hasDate, sourceName, dateErr := resolveZipDate(reader, member, index, opts.utc)
+			folder := targetFolder(dest, date, hasDate, opts.structure)
+			plans[filename] = append(plans[filename], zipEntryPlan{
+				memberIndex: memberIndex,
+				date:        date,
+				hasDate:     hasDate,
+				sourceName:  sourceName,
+				dateErr:     dateErr,
+				folder:      folder,
+			})
+			targetFolders = append(targetFolders, folder)
+		}
+		if err := reader.Close(); err != nil {
+			fmt.Fprintf(stderr, "  WARNING: closing %s: %v\n", filepath.Base(filename), err)
+		}
+	}
+
+	if !opts.dryRun {
+		missing, err := missingFolders(targetFolders)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 && opts.confirmMissing != nil {
+			confirmed, err := opts.confirmMissing(missing)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				return nil
+			}
+		}
+	}
+
 	stats := newStats()
 	seen := make(map[string]fileSignature)
 	total := 0
@@ -71,23 +124,19 @@ func organizeZips(source, dest string, opts options, stdout, stderr io.Writer) e
 		if err != nil {
 			continue
 		}
-		for _, member := range reader.File {
-			if member.FileInfo().IsDir() || shouldSkip(path.Base(member.Name)) {
-				continue
-			}
+		for _, plan := range plans[filename] {
+			member := reader.File[plan.memberIndex]
 			total++
-			date, hasDate, sourceName, err := resolveZipDate(reader, member, index, opts.utc)
-			if err != nil {
+			if plan.dateErr != nil {
 				stats.add("errors")
-				fmt.Fprintf(stderr, "  ERROR reading date on %s: %v\n", member.Name, err)
+				fmt.Fprintf(stderr, "  ERROR reading date on %s: %v\n", member.Name, plan.dateErr)
 			}
-			if hasDate {
-				stats.add(sourceName)
+			if plan.hasDate {
+				stats.add(plan.sourceName)
 			} else {
 				stats.add("no date found")
 			}
-			folder := targetFolder(dest, date, hasDate, opts.structure)
-			result, err := placeZipFile(member, folder, date, hasDate, opts.dryRun, seen)
+			result, err := placeZipFile(member, plan.folder, plan.date, plan.hasDate, opts.dryRun, seen)
 			if err != nil {
 				stats.add("errors")
 				fmt.Fprintf(stderr, "  ERROR on %s: %v\n", member.Name, err)

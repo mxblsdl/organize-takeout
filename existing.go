@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+const parallelWalkWorkers = 8
+
+type existingFilePlan struct {
+	filename   string
+	folder     string
+	sourceName string
+}
+
 func organizeExisting(source, dest string, opts options, stdout, stderr io.Writer) error {
 	sourceInfo, err := os.Stat(source)
 	if err != nil || !sourceInfo.IsDir() {
@@ -23,31 +31,26 @@ func organizeExisting(source, dest string, opts options, stdout, stderr io.Write
 
 	fmt.Fprintln(stdout, "Reading JSON sidecars under source...")
 	index := newDateIndex()
+	allFiles, err := walkFilesParallel(source)
+	if err != nil {
+		return fmt.Errorf("scan source folder: %w", err)
+	}
 	var files []string
-	err = filepath.WalkDir(source, func(filename string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
+	for _, filename := range allFiles {
 		if !shouldSkip(filename) {
 			files = append(files, filename)
 		}
 		if strings.EqualFold(filepath.Ext(filename), ".json") {
 			data, err := os.ReadFile(filename)
-			if err == nil {
-				relative, relErr := filepath.Rel(source, filename)
-				if relErr != nil {
-					return relErr
-				}
-				addMetadata(index, filepath.ToSlash(relative), data)
+			if err != nil {
+				continue
 			}
+			relative, err := filepath.Rel(source, filename)
+			if err != nil {
+				return fmt.Errorf("scan source folder: %w", err)
+			}
+			addMetadata(index, filepath.ToSlash(relative), data)
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("scan source folder: %w", err)
 	}
 	fmt.Fprintf(stdout, "Indexed %d metadata entries.\n", len(index.title))
 
@@ -55,18 +58,13 @@ func organizeExisting(source, dest string, opts options, stdout, stderr io.Write
 	byName := make(map[string][]string)
 	destCount := 0
 	if _, err := os.Stat(dest); err == nil {
-		err = filepath.WalkDir(dest, func(filename string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if !entry.IsDir() {
-				byName[filepath.Base(filename)] = append(byName[filepath.Base(filename)], filename)
-				destCount++
-			}
-			return nil
-		})
+		destFiles, err := walkFilesParallel(dest)
 		if err != nil {
 			return fmt.Errorf("scan destination folder: %w", err)
+		}
+		for _, filename := range destFiles {
+			byName[filepath.Base(filename)] = append(byName[filepath.Base(filename)], filename)
+			destCount++
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect destination folder %q: %w", dest, err)
@@ -74,7 +72,9 @@ func organizeExisting(source, dest string, opts options, stdout, stderr io.Write
 	fmt.Fprintf(stdout, "Found %d existing files in destination.\n\n", destCount)
 
 	stats := newStats()
-	for i, filename := range files {
+	plans := make([]existingFilePlan, 0, len(files))
+	var targetFolders []string
+	for _, filename := range files {
 		relative, err := filepath.Rel(source, filepath.Dir(filename))
 		if err != nil {
 			stats.add("errors")
@@ -94,15 +94,38 @@ func organizeExisting(source, dest string, opts options, stdout, stderr io.Write
 			continue
 		}
 		folder := targetFolder(dest, date, true, opts.structure)
-		result, err := placeExistingFile(filename, folder, opts, byName)
+		plans = append(plans, existingFilePlan{
+			filename: filename, folder: folder, sourceName: sourceName,
+		})
+		targetFolders = append(targetFolders, folder)
+	}
+
+	if !opts.dryRun {
+		missing, err := missingFolders(targetFolders)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 && opts.confirmMissing != nil {
+			confirmed, err := opts.confirmMissing(missing)
+			if err != nil {
+				return err
+			}
+			if !confirmed {
+				return nil
+			}
+		}
+	}
+
+	for i, plan := range plans {
+		result, err := placeExistingFile(plan.filename, plan.folder, opts, byName)
 		if err != nil {
 			stats.add("errors")
-			fmt.Fprintf(stderr, "  ERROR on %s: %v\n", filename, err)
+			fmt.Fprintf(stderr, "  ERROR on %s: %v\n", plan.filename, err)
 		} else {
 			stats.add(result)
 		}
-		if sourceName != "" {
-			stats.add(sourceName)
+		if plan.sourceName != "" {
+			stats.add(plan.sourceName)
 		}
 		if (i+1)%500 == 0 {
 			fmt.Fprintf(stdout, "  ...%d files handled\n", i+1)
@@ -126,6 +149,77 @@ func organizeExisting(source, dest string, opts options, stdout, stderr io.Write
 		fmt.Fprintln(stdout, "\nNote: some files had no JSON/EXIF/filename date, so their own modified time was used -- double check these if that timestamp might be unreliable (e.g. set by extraction, not the original photo).")
 	}
 	return nil
+}
+
+func walkFilesParallel(root string) ([]string, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return []string{root}, nil
+	}
+
+	type result struct {
+		files []string
+		dirs  []string
+		err   error
+	}
+
+	jobs := make(chan string)
+	results := make(chan result, parallelWalkWorkers)
+	for i := 0; i < parallelWalkWorkers; i++ {
+		go func() {
+			for directory := range jobs {
+				entries, err := os.ReadDir(directory)
+				if err != nil {
+					results <- result{err: fmt.Errorf("read directory %q: %w", directory, err)}
+					continue
+				}
+				scan := result{}
+				for _, entry := range entries {
+					filename := filepath.Join(directory, entry.Name())
+					if entry.IsDir() {
+						scan.dirs = append(scan.dirs, filename)
+					} else {
+						scan.files = append(scan.files, filename)
+					}
+				}
+				results <- scan
+			}
+		}()
+	}
+
+	queue := []string{root}
+	active := 0
+	var files []string
+	var firstErr error
+	for len(queue) > 0 || active > 0 {
+		var next string
+		var jobChannel chan string
+		if len(queue) > 0 && active < parallelWalkWorkers {
+			next = queue[0]
+			jobChannel = jobs
+		}
+		select {
+		case jobChannel <- next:
+			queue = queue[1:]
+			active++
+		case scan := <-results:
+			active--
+			files = append(files, scan.files...)
+			queue = append(queue, scan.dirs...)
+			if firstErr == nil && scan.err != nil {
+				firstErr = scan.err
+			}
+		}
+	}
+	close(jobs)
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func resolveExistingDate(filename, relativeDir string, index dateIndex, info os.FileInfo, utc bool) (time.Time, string, error) {

@@ -240,7 +240,7 @@ func makeZip(t *testing.T, filename string, entries map[string][]byte) {
 
 func TestRunHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"help"}, &stdout, &stderr); code != 0 {
+	if code := run([]string{"help"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("run(help) exit code = %d", code)
 	}
 	if !strings.Contains(stdout.String(), "organize-photos <command>") {
@@ -261,8 +261,11 @@ func TestRunImportCopiesFilesIntoYearMonthFolders(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"import", source, dest}, &stdout, &stderr); code != 0 {
+	if code := run([]string{"import", source, dest}, strings.NewReader("y\n"), &stdout, &stderr); code != 0 {
 		t.Fatalf("run(import) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), filepath.Join(dest, "2020", "06")) {
+		t.Fatalf("confirmation should show planned destination folder: %s", stderr.String())
 	}
 	if _, err := os.Stat(sourceFile); err != nil {
 		t.Fatalf("import should leave the source file untouched: %v", err)
@@ -306,10 +309,116 @@ func TestRunMountsPrintsGVFSPaths(t *testing.T) {
 
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"mounts"}, &stdout, &stderr); code != 0 {
+	if code := run([]string{"mounts"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
 		t.Fatalf("run(mounts) exit code = %d; stderr: %s", code, stderr.String())
 	}
 	if strings.TrimSpace(stdout.String()) != mountPath {
 		t.Fatalf("run(mounts) output = %q, want %q", stdout.String(), mountPath)
+	}
+}
+
+func TestRunImportDeclinesWhenDestinationFoldersAreMissing(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "sd-card")
+	dest := filepath.Join(root, "usb-drive")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(source, "IMG_20200615.jpg")
+	if err := os.WriteFile(sourceFile, []byte("photo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"import", source, dest}, strings.NewReader("n\n"), &stdout, &stderr); code != 0 {
+		t.Fatalf("run(import) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	if _, err := os.Stat(sourceFile); err != nil {
+		t.Fatal("declining confirmation should preserve source files")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("declining confirmation should not create the destination")
+	}
+	if !strings.Contains(stderr.String(), "Cancelled") {
+		t.Fatalf("expected cancellation message, got: %s", stderr.String())
+	}
+}
+
+func TestRunExistingCancelsAtEOFWithoutMovingFiles(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	dest := filepath.Join(root, "usb-drive")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(source, "IMG_20200615.jpg")
+	if err := os.WriteFile(sourceFile, []byte("photo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"existing", source, dest}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("run(existing) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	if _, err := os.Stat(sourceFile); err != nil {
+		t.Fatal("end-of-input should cancel before moving source files")
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("end-of-input should cancel before creating destination folders")
+	}
+	if !strings.Contains(stderr.String(), "Cancelled") {
+		t.Fatalf("expected cancellation message, got: %s", stderr.String())
+	}
+}
+
+func TestRunImportSkipsConfirmationWhenTargetFolderExists(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "sd-card")
+	dest := filepath.Join(root, "photos")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dest, "2020", "06")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(source, "IMG_20200615.jpg")
+	if err := os.WriteFile(sourceFile, []byte("photo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"import", source, dest}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("run(import) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Continue?") {
+		t.Fatalf("confirmation should not be requested when target folders exist: %s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(target, filepath.Base(sourceFile))); err != nil {
+		t.Fatalf("imported file not found: %v", err)
+	}
+}
+
+func TestRunZipPromptsBeforeCreatingDestinationFolders(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "takeout")
+	dest := filepath.Join(root, "usb-drive")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	makeZip(t, filepath.Join(source, "media.zip"), map[string][]byte{
+		"photo_20200615.jpg": []byte("photo"),
+	})
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"zip", source, dest}, strings.NewReader("y\n"), &stdout, &stderr); code != 0 {
+		t.Fatalf("run(zip) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	target := filepath.Join(dest, "2020", "06", "photo_20200615.jpg")
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("zip output not found: %v", err)
+	}
+	if !strings.Contains(stderr.String(), filepath.Dir(target)) {
+		t.Fatalf("confirmation should show planned destination folder: %s", stderr.String())
 	}
 }

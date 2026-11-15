@@ -26,6 +26,7 @@ type options struct {
 	dryRun           bool
 	copyFiles        bool
 	removeDuplicates bool
+	confirmMissing   func([]string) (bool, error)
 }
 
 type dateKey struct {

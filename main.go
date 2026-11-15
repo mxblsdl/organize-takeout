@@ -11,10 +11,10 @@ import (
 )
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		printUsage(stdout)
 		return 0
@@ -22,11 +22,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch args[0] {
 	case "zip":
-		return runZipCommand(args[1:], stdout, stderr)
+		return runZipCommand(args[1:], stdin, stdout, stderr)
 	case "existing":
-		return runExistingCommand(args[1:], stdout, stderr)
+		return runExistingCommand(args[1:], stdin, stdout, stderr)
 	case "import":
-		return runImportCommand(args[1:], stdout, stderr)
+		return runImportCommand(args[1:], stdin, stdout, stderr)
 	case "mounts":
 		return runMountsCommand(args[1:], stdout, stderr)
 	default:
@@ -57,7 +57,7 @@ func commonFlags(fs *flag.FlagSet, opts *options) {
 	fs.BoolVar(&opts.dryRun, "dry-run", false, "show what would happen without writing or moving files")
 }
 
-func runZipCommand(args []string, stdout, stderr io.Writer) int {
+func runZipCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	opts := options{}
 	fs := flag.NewFlagSet("zip", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -77,6 +77,9 @@ func runZipCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Invalid structure %q (choose year, year-month, or year-month-day)\n", opts.structure)
 		return 2
 	}
+	opts.confirmMissing = func(folders []string) (bool, error) {
+		return confirmMissingFolders(stdin, stderr, folders)
+	}
 	if err := organizeZips(fs.Arg(0), fs.Arg(1), opts, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
@@ -84,7 +87,7 @@ func runZipCommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runExistingCommand(args []string, stdout, stderr io.Writer) int {
+func runExistingCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	opts := options{}
 	fs := flag.NewFlagSet("existing", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -106,6 +109,9 @@ func runExistingCommand(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Invalid structure %q (choose year, year-month, or year-month-day)\n", opts.structure)
 		return 2
 	}
+	opts.confirmMissing = func(folders []string) (bool, error) {
+		return confirmMissingFolders(stdin, stderr, folders)
+	}
 	if err := organizeExisting(fs.Arg(0), fs.Arg(1), opts, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
@@ -113,7 +119,7 @@ func runExistingCommand(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func runImportCommand(args []string, stdout, stderr io.Writer) int {
+func runImportCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	opts := options{copyFiles: true}
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -132,6 +138,9 @@ func runImportCommand(args []string, stdout, stderr io.Writer) int {
 	if !validStructure(opts.structure) {
 		fmt.Fprintf(stderr, "Invalid structure %q (choose year, year-month, or year-month-day)\n", opts.structure)
 		return 2
+	}
+	opts.confirmMissing = func(folders []string) (bool, error) {
+		return confirmMissingFolders(stdin, stderr, folders)
 	}
 	if err := organizeExisting(fs.Arg(0), fs.Arg(1), opts, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
