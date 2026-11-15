@@ -8,16 +8,27 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
-const parallelWalkWorkers = 8
+const (
+	parallelWalkWorkers = 8
+	parallelDateWorkers = 8
+)
 
 type existingFilePlan struct {
 	filename   string
 	folder     string
 	sourceName string
+}
+
+type existingFileResolution struct {
+	fileIndex  int
+	plan       existingFilePlan
+	errorStage string
+	err        error
 }
 
 func organizeExisting(source, dest string, opts options, stdout, stderr io.Writer) error {
@@ -74,30 +85,15 @@ func organizeExisting(source, dest string, opts options, stdout, stderr io.Write
 	stats := newStats()
 	plans := make([]existingFilePlan, 0, len(files))
 	var targetFolders []string
-	for _, filename := range files {
-		relative, err := filepath.Rel(source, filepath.Dir(filename))
-		if err != nil {
+	results := resolveExistingFiles(source, files, dest, index, opts)
+	for _, result := range results {
+		if result.err != nil {
 			stats.add("errors")
-			fmt.Fprintf(stderr, "  ERROR on %s: %v\n", filename, err)
+			fmt.Fprintf(stderr, "  %s %s: %v\n", result.errorStage, result.plan.filename, result.err)
 			continue
 		}
-		info, err := os.Stat(filename)
-		if err != nil {
-			stats.add("errors")
-			fmt.Fprintf(stderr, "  ERROR on %s: %v\n", filename, err)
-			continue
-		}
-		date, sourceName, err := resolveExistingDate(filename, filepath.ToSlash(relative), index, info, opts.utc)
-		if err != nil {
-			stats.add("errors")
-			fmt.Fprintf(stderr, "  ERROR resolving date on %s: %v\n", filename, err)
-			continue
-		}
-		folder := targetFolder(dest, date, true, opts.structure)
-		plans = append(plans, existingFilePlan{
-			filename: filename, folder: folder, sourceName: sourceName,
-		})
-		targetFolders = append(targetFolders, folder)
+		plans = append(plans, result.plan)
+		targetFolders = append(targetFolders, result.plan.folder)
 	}
 
 	if !opts.dryRun {
@@ -149,6 +145,70 @@ func organizeExisting(source, dest string, opts options, stdout, stderr io.Write
 		fmt.Fprintln(stdout, "\nNote: some files had no JSON/EXIF/filename date, so their own modified time was used -- double check these if that timestamp might be unreliable (e.g. set by extraction, not the original photo).")
 	}
 	return nil
+}
+
+func resolveExistingFiles(source string, files []string, dest string, index dateIndex, opts options) []existingFileResolution {
+	if len(files) == 0 {
+		return nil
+	}
+
+	workerCount := parallelDateWorkers
+	if len(files) < workerCount {
+		workerCount = len(files)
+	}
+	jobs := make(chan int, len(files))
+	for i := range files {
+		jobs <- i
+	}
+	close(jobs)
+
+	results := make(chan existingFileResolution, workerCount)
+	var workers sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for fileIndex := range jobs {
+				filename := files[fileIndex]
+				result := existingFileResolution{
+					fileIndex: fileIndex,
+					plan:      existingFilePlan{filename: filename},
+				}
+				relative, err := filepath.Rel(source, filepath.Dir(filename))
+				if err != nil {
+					result.errorStage = "ERROR on"
+					result.err = err
+					results <- result
+					continue
+				}
+				info, err := os.Stat(filename)
+				if err != nil {
+					result.errorStage = "ERROR on"
+					result.err = err
+					results <- result
+					continue
+				}
+				date, sourceName, err := resolveExistingDate(filename, filepath.ToSlash(relative), index, info, opts.utc)
+				if err != nil {
+					result.errorStage = "ERROR resolving date on"
+					result.err = err
+					results <- result
+					continue
+				}
+				result.plan.folder = targetFolder(dest, date, true, opts.structure)
+				result.plan.sourceName = sourceName
+				results <- result
+			}
+		}()
+	}
+
+	resolved := make([]existingFileResolution, len(files))
+	for i := 0; i < len(files); i++ {
+		result := <-results
+		resolved[result.fileIndex] = result
+	}
+	workers.Wait()
+	return resolved
 }
 
 func walkFilesParallel(root string) ([]string, error) {

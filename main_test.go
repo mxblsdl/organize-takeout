@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,6 +180,43 @@ func TestOrganizeExistingMovesAndCopies(t *testing.T) {
 			t.Fatal("dry run must not create destination")
 		}
 	})
+}
+
+func TestOrganizeExistingResolvesMultipleSidecarsConcurrently(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	dest := filepath.Join(root, "dest")
+	if err := os.Mkdir(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const fileCount = 16
+	for i := 0; i < fileCount; i++ {
+		name := fmt.Sprintf("photo-%02d.jpg", i)
+		if err := os.WriteFile(filepath.Join(source, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		metadata := fmt.Sprintf(`{"title":%q,"photoTakenTime":{"timestamp":"1598918400"}}`, name)
+		if err := os.WriteFile(filepath.Join(source, name+".json"), []byte(metadata), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := organizeExisting(source, dest, options{
+		structure: "year-month", utc: true, copyFiles: true,
+	}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < fileCount; i++ {
+		name := fmt.Sprintf("photo-%02d.jpg", i)
+		if _, err := os.Stat(filepath.Join(dest, "2020", "09", name)); err != nil {
+			t.Fatalf("resolved file %q not found: %v", name, err)
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected errors: %s", stderr.String())
+	}
 }
 
 func TestOrganizeExistingRemovesDestinationDuplicates(t *testing.T) {
