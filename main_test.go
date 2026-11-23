@@ -7,9 +7,23 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
+
+func TestHelpDescribesAllSourceTypes(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("run(help) exit code = %d; stderr: %s", code, stderr.String())
+	}
+	help := stdout.String()
+	for _, text := range []string{"Organize photos and videos", "Takeout", "SD card", "already-extracted folder"} {
+		if !strings.Contains(help, text) {
+			t.Fatalf("help missing %q: %s", text, help)
+		}
+	}
+}
 
 func TestDateIndexDuplicateAndEditedCandidates(t *testing.T) {
 	index := newDateIndex()
@@ -33,6 +47,23 @@ func TestDateFromFilename(t *testing.T) {
 	}
 	if _, ok := dateFromFilename("photo_2021-02-29.jpg"); ok {
 		t.Fatal("invalid calendar date should not match")
+	}
+}
+
+func TestOrganizeZipsAcceptsZipFile(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "takeout.zip")
+	dest := filepath.Join(root, "organized")
+	makeZip(t, source, map[string][]byte{
+		"Takeout/Google Photos/photo_20200615.jpg": []byte("photo"),
+	})
+
+	var stdout, stderr bytes.Buffer
+	if err := organizeZips(source, dest, options{structure: "year-month", utc: true}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "2020", "06", "photo_20200615.jpg")); err != nil {
+		t.Fatalf("zip output not found: %v", err)
 	}
 }
 
@@ -259,7 +290,13 @@ func makeZip(t *testing.T, filename string, entries map[string][]byte) {
 		t.Fatal(err)
 	}
 	writer := zip.NewWriter(file)
-	for name, data := range entries {
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		data := entries[name]
 		entry, err := writer.Create(name)
 		if err != nil {
 			t.Fatal(err)

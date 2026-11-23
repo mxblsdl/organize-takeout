@@ -27,16 +27,39 @@ type zipEntryPlan struct {
 	folder      string
 }
 
-func organizeZips(source, dest string, opts options, stdout, stderr io.Writer) error {
+func zipFilesFromSource(source string) ([]string, error) {
+	info, err := os.Stat(source)
+	if err != nil {
+		return nil, fmt.Errorf("read source %q: %w", source, err)
+	}
+	if !info.IsDir() {
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("source %q is not a regular file or directory", source)
+		}
+		if !strings.EqualFold(filepath.Ext(source), ".zip") {
+			return nil, fmt.Errorf("source file %q is not a .zip file", source)
+		}
+		return []string{source}, nil
+	}
+
 	entries, err := os.ReadDir(source)
 	if err != nil {
-		return fmt.Errorf("read source folder %q: %w", source, err)
+		return nil, fmt.Errorf("read source folder %q: %w", source, err)
 	}
 	var zips []string
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".zip") {
+		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".zip") {
 			zips = append(zips, filepath.Join(source, entry.Name()))
 		}
+	}
+	sort.Strings(zips)
+	return zips, nil
+}
+
+func organizeZips(source, dest string, opts options, stdout, stderr io.Writer) error {
+	zips, err := zipFilesFromSource(source)
+	if err != nil {
+		return err
 	}
 	if len(zips) == 0 {
 		return fmt.Errorf("no .zip files found in %s", source)

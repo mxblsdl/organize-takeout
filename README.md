@@ -7,6 +7,24 @@ them, and `existing` organizes files that have already been extracted.
 
 ## Install
 
+If Go is installed, install directly from GitHub:
+
+```sh
+go install github.com/mxblsdl/organize-takeout@latest
+```
+
+Ensure Go's binary directory is in your `PATH`:
+
+```sh
+# Linux and macOS
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+```powershell
+# Windows PowerShell
+$env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+```
+
 Build the executable from a checkout:
 
 ```sh
@@ -30,10 +48,12 @@ go build -o "$HOME/.local/bin/organize-photos" .
 
 ## Usage
 
-Organize all `.zip` files directly from a Takeout folder:
+Organize a single Takeout `.zip` file, or all `.zip` files in a Takeout folder:
 
 ```sh
+organize-photos zip ~/Downloads/takeout-20261123T034852Z-1-001.zip ~/Photos-Backup
 organize-photos zip ~/Downloads/takeout ~/Photos-Backup
+organize-photos zip --dry-run ~/Downloads/takeout-20261123T034852Z-1-001.zip ~/Photos-Backup
 organize-photos zip --dry-run ~/Downloads/takeout ~/Photos-Backup
 ```
 

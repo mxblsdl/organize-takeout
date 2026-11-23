@@ -37,16 +37,21 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `Organize Google Photos Takeout files by date.
+	fmt.Fprintln(w, `Organize photos and videos by date.
 
 Usage:
   organize-photos <command> [options] SOURCE DEST
 
 Commands:
-  zip       Organize media directly from Takeout .zip files
-  existing  Organize media in an already-extracted folder
-  import    Copy media from an SD card or folder into the organized library
+  zip       Organize media from one Takeout .zip file or a folder of Takeout ZIPs
+  existing  Move media from an already-extracted folder into the organized library
+  import    Copy media from a camera, SD card, or folder into the organized library
   mounts    List paths to mounted GVFS network shares
+
+Examples:
+  organize-photos zip takeout-*.zip ~/Photos
+  organize-photos existing ~/extracted-takeout ~/Photos
+  organize-photos import /media/$USER/SDCARD/DCIM ~/Photos
 
 Run "organize-photos <command> -h" for command options.`)
 }
